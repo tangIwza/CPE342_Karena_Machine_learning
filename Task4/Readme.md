@@ -4,7 +4,7 @@ This repository contains the solution for **CPE342 Task 4 (Karena)**. The projec
 
 ---
 
-## 📊 1. EDA Findings (Exploratory Data Analysis)
+## 1. EDA Findings (Exploratory Data Analysis)
 Before modeling, we explored the dataset and identified the following key characteristics:
 
 * **Class Imbalance:** The distribution of classes in `train.csv` was found to be imbalanced. Some categories had significantly fewer images than others.
@@ -13,7 +13,7 @@ Before modeling, we explored the dataset and identified the following key charac
     * *Solution:* Added a fallback logic in the `GameDataset` class to search for correct extensions automatically.
 * **Image Quality:** Images vary in resolution and aspect ratio.
 
-## ⚙️ 2. Data Preprocessing
+## 2. Data Preprocessing
 To prepare the data for the Swin Transformer, the following steps were taken:
 
 * **Resizing:** All images are resized to **224x224** pixels (Standard ImageNet size).
@@ -25,7 +25,7 @@ To prepare the data for the Swin Transformer, the following steps were taken:
     * `ColorJitter`: Slight adjustments to brightness, contrast, and saturation.
 * **Validation/Test Set:** Only resizing and normalization were applied to maintain data integrity for evaluation.
 
-## 🧠 3. Model Design
+## 3. Model Design
 We selected a Transformer-based architecture over traditional CNNs for better feature extraction capabilities.
 
 * **Architecture:** `swin_small_patch4_window7_224` (Pre-trained on ImageNet).
@@ -38,7 +38,7 @@ We selected a Transformer-based architecture over traditional CNNs for better fe
     * **Mixed Precision (AMP):** Used `GradScaler` to speed up training and reduce VRAM usage on the RTX 3050 GPU.
     * **Early Stopping:** Set to 2 epochs to prevent unnecessary computation if validation accuracy stalls.
 
-## 📈 4. Evaluation & Results
+## 4. Evaluation & Results
 The model was evaluated using **Accuracy** across 5 folds.
 
 * **Hardware:** NVIDIA GeForce RTX 3050 Laptop GPU.
@@ -50,17 +50,17 @@ The model was evaluated using **Accuracy** across 5 folds.
 
 > **Note:** Training converges very quickly, reaching ~96% accuracy within the second epoch.
 
-## 💡 5. Insights Gained from Model Behavior
+## 5. Insights Gained from Model Behavior
 * **Pre-training is Key:** Using the pre-trained weights from ImageNet allowed the model to converge extremely fast (less than 5 epochs) even on a custom dataset.
 * **Robustness:** The small gap between Training Accuracy (~99%) and Validation Accuracy (~98.5%) indicates that the aggressive data augmentation and weight decay effectively prevented overfitting.
 * **Transformer Efficiency:** Despite being a Transformer, the "Small" Swin variant fits well within 4GB VRAM (RTX 3050) when using a batch size of 32 and Mixed Precision.
 
-## ❌ 6. Common Mistakes or Failed Experiments
+## 6. Common Mistakes or Failed Experiments
 * **Interrupting Training:** Training time on a laptop GPU is significant. A `KeyboardInterrupt` occurred during Fold 3, highlighting the need for checkpointing (which was implemented via `torch.save`).
 * **File Path Issues:** Initially, some images failed to load due to case-sensitive extensions (`.JPG` vs `.jpg`). The dataset class was updated to handle this robustly using a loop check.
 * **Dataloader Workers:** On Windows, setting `NUM_WORKERS > 0` often causes multiprocessing errors. We set `NUM_WORKERS = 0` to ensure stability.
 
-## 🌍 7. Domain Interpretation of Results
+## 7. Domain Interpretation of Results
 * **Application:** This model is designed to classify assets or characters within the "Karena" game domain.
 * **Business Impact:** With >98% accuracy, this model can be reliably used to automate asset tagging, verify uploaded content, or assist in game state analysis without manual intervention.
 * **Scalability:** The pipeline allows for easy integration of new classes by simply updating the dataset and re-running the training script.
