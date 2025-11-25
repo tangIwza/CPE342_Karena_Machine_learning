@@ -1,120 +1,69 @@
-TASK 3: MONTHLY SPENDING PREDICTION
-================================================================================
+# CPE342 Karena Task 3 (V6): Future Spending Prediction
 
-TARGET VARIABLE: spending_30d (Continuous)
-Predicted spending amount in THB for next 30 days
+This repository contains the solution for **CPE342 Task 3 (Karena)**, aimed at predicting the 30-day future spending of players (`spending_30d`). The solution implements a sophisticated **Two-Stage Full Stacking Ensemble** approach, optimized with **Optuna** and enhanced by **MICE Imputation**.
 
-FEATURES (32 features):
+---
 
-1. friend_count (float)
-   Number of in-game friends
+## 1. EDA Findings (Exploratory Data Analysis)
+Analysis of the game data revealed distinct patterns necessitating a specific modeling approach:
 
-2. social_interactions (float)
-   Weekly gifts, trades, team activities
+* **Zero-Inflated Data:** A vast majority of players do not spend money ($0 value), while a small segment ("Whales") spends significantly. This implies a single regression model would struggle.
+    * *Solution:* Split the problem into **Classification** (Will spend?) and **Regression** (How much?).
+* **Skewed Distributions:** Key features like `historical_spending` and `total_playtime_hours` are heavily right-skewed.
+* **Correlated Behaviors:** High spenders often have distinct behavioral markers, such as high `purchases_on_discount` ratios and specific `platform` preferences.
 
-3. guild_membership (float)
-   Guild[1]/clan membership status
+## ⚙️ 2. Data Preprocessing
+A robust pipeline was built to handle missing values and outliers effectively:
 
-4. event_participation_rate (float)
-   Percentage of limited-time events[2] joined
+* **Advanced Imputation (MICE):** Switched from simple mean/median filling to **IterativeImputer (MICE)**. This models each feature as a function of others, providing much more accurate estimates for missing player stats.
+* **Feature Engineering:**
+    * **Behavioral Ratios:** Created `spending_per_day`, `playtime_per_session`, and `interaction_per_friend` to normalize data across account ages.
+    * **Whale Flags:** Added `is_whale` (Top 5% spenders) and `high_activity` (Top 10% playtime) to help the model identify VIPs explicitly.
+* **Transformations:**
+    * **Log Transformation:** Applied `np.log1p` to skewed columns to normalize distributions for linear models.
+    * **Robust Scaling:** Used `RobustScaler` instead of StandardScaler to minimize the impact of extreme outliers (Whales).
 
-5. daily_login_streak (float)
-   Current consecutive daily login streak
+## 3. Model Design
+The core architecture is a **Hurdle Model (Two-Stage Prediction)** implemented via Stacking:
 
-6. avg_session_length (float)
-   Average session duration in minutes
+### Stage 1: Classification (Will the player spend?)
+* **Objective:** Predict probability of `spending_30d > 0`.
+* **Stacking Ensemble:**
+    * **Base Learners:** `LGBMClassifier` (Tuned), `XGBClassifier` (Tuned), `LogisticRegression`.
+    * **Meta Learner:** `LogisticRegression`.
+    * **Optimization:** Hyperparameters tuned via **Optuna** to maximize ROC-AUC.
 
-7. sessions_per_week (float)
-   Number of play sessions per week
+### Stage 2: Regression (If they spend, how much?)
+* **Objective:** Predict `log1p(spending_30d)` for positive cases.
+* **Stacking Ensemble:**
+    * **Base Learners:** `LGBMRegressor`, `XGBRegressor`, `GradientBoostingRegressor`, `LassoCV`, `ElasticNetCV`.
+    * **Meta Learner:** `Lasso` (L1 Regularization) to robustly blend predictions.
+    * **Optimization:** Hyperparameters tuned via **Optuna** to minimize RMSE.
 
-8. total_playtime_hours (float)
-   Lifetime cumulative playtime
+## 4. Evaluation & Results
+The model uses **5-Fold Cross-Validation** to ensure generalization.
 
-9. days_since_last_login (float)
-   Days since most recent login
+* **Metric:** The final output combines the Probability from Stage 1 and the Amount from Stage 2.
+    * *Equation:* `Final_Prediction = Probability_Spend * Predicted_Amount`
+* **Performance:**
+    * **Classification:** High AUC scores indicated the model effectively separates F2P players from payers.
+    * **Regression:** The stacking approach with Lasso meta-learner significantly reduced error variance compared to single models.
 
-10. achievement_count (float)
-    Total achievements[3] unlocked
+## 5. Insights Gained from Model Behavior
+* **The Power of Two Stages:** Trying to predict spending directly with a single regressor often yields poor results because the model learns to predict near-zero values for everyone. Separating the "Zero" vs "Non-Zero" decision drastically improved accuracy.
+* **Linear Models in Stacking:** While Tree-based models (XGB/LGBM) are excellent feature extractors, including linear models (`Lasso`, `ElasticNet`) in the stacking layer helped the model extrapolate better for high-spending "Whale" values.
+* **Imputation Matters:** Using MICE (`IterativeImputer`) preserved the correlation structure between `friend_count` and `social_interactions`, which simple imputation destroys.
 
-11. achievement_completion_rate (float)
-    Percentage of all achievements[3] completed
+## 6. Common Mistakes or Failed Experiments
+* **Global Imputation:** In earlier versions, imputing data before splitting caused data leakage. V6 fixes this by using `Pipeline` to impute within cross-validation folds.
+* **Ignoring Outliers:** Standard scaling failed because "Whales" skewed the mean. Switching to `RobustScaler` (based on quartiles) stabilized the linear models in the stack.
+* **Single Stage Regression:** Initial attempts to use just XGBoost Regressor resulted in many negative predictions or under-prediction of high spenders.
 
-12. historical_spending (float)
-    Historical spending over past periods
+## 7. Domain Interpretation of Results
+* **Business Impact:** Accurately predicting LTV (Lifetime Value) allow game developers to:
+    1.  **Target Whales:** Offer exclusive VIP packages to high-predicted spenders.
+    2.  **Convert F2P:** Identify players with high conversion probability (Stage 1) but low predicted spending (Stage 2) and target them with "Starter Pack" discounts.
+* **Segmentation:** The `segment` and `is_premium_member` features were critical, suggesting that monetization strategies should be tailored to specific player tiers rather than a one-size-fits-all approach.
 
-13. prev_month_spending (float)
-    Actual spending in the previous month
-
-14. total_transactions (float)
-    Total number of transactions
-
-15. avg_transaction_value (float)
-    Average value per transaction
-
-16. account_age_days (float)
-    Days since account creation
-
-17. vip_status (float)
-    Current VIP[4] tier level
-
-18. is_premium_member (float)
-    Premium membership status
-
-19. primary_game (float)
-    Main game played (encoded as integer)
-
-20. games_played (float)
-    Number of different Karena games played
-
-21. cross_game_activity (float)
-    Play sessions across multiple games
-
-22. platform (float)
-    Primary gaming platform (encoded)
-
-23. days_since_last_purchase (float)
-    Days since most recent purchase
-
-24. purchase_frequency (float)
-    Average frequency of purchases
-
-25. payment_methods_used (float)
-    Number of different payment methods used
-
-26. purchases_on_discount (float)
-    Number of purchases made during sales
-
-27. discount_rate_used (float)
-    Average discount rate utilized
-
-28. seasonal_spending_pattern (float)
-    Historical spending variation by month/season
-
-29. owns_limited_edition (float)
-    Ownership of limited edition[5] items
-
-30. competitive_rank (float)
-    Current competitive ranking
-
-31. tournament_participation (float)
-    Participation in tournaments[6]
-
-32. segment (float)
-    Player segment classification from Task 2
-
-
-================================================================================
-GAME TERMINOLOGY DEFINITIONS
-================================================================================
-
-[1] Guild/Clan - A group or team of players who play together regularly
-
-[2] Event - Special limited-time in-game activities or challenges with unique rewards
-
-[3] Achievement - In-game goal or milestone that rewards players for completing specific tasks
-
-[4] VIP - Premium membership tier offering special benefits to paying members
-
-[5] Limited Edition - Rare items only available for a short time period
-
-[6] Tournament - Organized competitive event where players compete for prizes or recognition
+---
+*Created for CPE342 by [Chonathun Cheepsathis/66070507201]*
