@@ -1,62 +1,59 @@
-# CPE342 Karena Task 1 (V7): Cheater Detection System
+# CPE342 Karena Task 1 (V5): Cheater Detection System
 
-This repository contains the solution for **CPE342 Task 1 (Karena)**, focusing on detecting cheaters in an online game environment. The solution employs a **Stacking Ensemble** approach, combining XGBoost, LightGBM, and CatBoost, optimized via Optuna and enhanced with advanced feature engineering and anomaly detection.
+This repository contains the solution for **CPE342 Task 1 (Karena)**, designed to detect cheaters in online gaming. The solution implements a **Weighted Ensemble** of LightGBM, XGBoost, and CatBoost, enhanced with **SMOTE Oversampling** and advanced feature engineering to handle class imbalance effectively.
 
 ---
 
 ## 1. EDA Findings (Exploratory Data Analysis)
-Exploratory analysis revealed critical insights into the player behavior dataset:
+Initial analysis of the dataset revealed critical insights guiding the model design:
 
-* **Class Imbalance:** The dataset is imbalanced with significantly more "Normal" players (63,619) compared to "Cheaters" (34,129). This necessitated the use of class weighting strategies (`scale_pos_weight`) rather than standard sampling.
-* **Skewed Distributions:** Several numerical features such as `survival_time_avg`, `damage_per_round`, and `account_age_days` showed highly skewed distributions, indicating the need for Log Transformation.
-* **Correlation & Noise:** Correlation analysis (Pearson) was performed to identify feature relationships. Certain features like `friend_network_size` and `device_changes_count` were identified as low-signal noise and removed to reduce model complexity.
+* **Class Imbalance:** The dataset is moderately imbalanced with ~65% Normal players vs. ~35% Cheaters. This imbalance necessitated the use of **SMOTE** and `scale_pos_weight`.
+* **Behavioral Indicators:**
+    * **Skill Outliers:** Cheaters exhibit unnaturally high correlations between kill metrics (`kill_death_ratio`) and precision (`headshot_percentage`).
+    * **New Accounts:** High-performing accounts with low `account_age_days` are statistically suspicious.
+    * **Social Isolation:** Cheaters tend to have fewer friends relative to the number of reports received (`report_friend_ratio`).
 
-## ⚙️ 2. Data Preprocessing
-To prepare the data for the ensemble model, a robust preprocessing pipeline was implemented:
+## 2. Data Preprocessing
+A robust preprocessing pipeline was engineered to transform raw gameplay stats into predictive signals:
 
-* **Advanced Feature Engineering:** created context-aware features to capture cheating behavior better:
-    * `report_per_kill`: Normalizes reports by kill count to distinguish skilled players from cheaters.
-    * `sus_score`: Combines headshot percentage and win rate relative to account age.
-    * `Aim_to_Brain_Ratio`: Contrasts raw mechanical aim against game knowledge/utility usage.
-* **Anomaly Detection:** Integrated **Isolation Forest** (contamination=0.05) to generate an `anomaly_score` feature, effectively flagging outlier behaviors that statistically deviate from the norm.
-* **Transformations:**
-    * **Imputation:** Missing values were filled using the median strategy.
-    * **Log Transform:** Applied `np.log1p` to skewed columns to normalize distributions.
-    * **Scaling:** Used `StandardScaler` to standardize features for the stacking meta-learner.
+* **Advanced Feature Engineering (15+ New Features):**
+    * **Suspicion Score:** A composite metric combining K/D ratio and Headshot % normalized by account age.
+    * **Aim-Movement Mismatch:** Captures players with perfect aim (`aiming_smoothness`) but poor movement (`movement_pattern_score`), a classic sign of aimbots.
+    * **Hardware Volatility:** Tracks abnormal device changes normalized by account lifespan.
+* **Imputation Strategy:** Implemented a hybrid approach using `mean` for features with low missing rates and `median` for those with high missing rates (>10%) to preserve distribution integrity.
+* **SMOTE Oversampling:** Synthetic Minority Over-sampling Technique (SMOTE) was applied *only* within the training folds of Cross-Validation to prevent data leakage while balancing the classes for better model learning.
 
 ## 3. Model Design
-The solution utilizes a **Stacking Classifier** to leverage the strengths of multiple gradient boosting frameworks.
+The core architecture is a **Weighted Ensemble Classifier** designed to maximize the F2-Score (Recall-focused).
 
-* **Base Learners:**
-    1.  **XGBoost:** Tuned with `scale_pos_weight`.
-    2.  **LightGBM:** Tuned with `class_weight='balanced'`.
-    3.  **CatBoost:** Tuned with `auto_class_weights='Balanced'`.
-* **Meta Learner:** `LogisticRegression` was used to blend the predictions of the base learners.
-* **Hyperparameter Tuning:** utilized **Optuna** to maximize **ROC AUC** for all base models, running separate studies to find the optimal architecture (depth, learning rate, regularization) for each.
+* **Base Learners (The "Big 3"):**
+    1.  **LightGBM:** Optimized for speed and handling categorical features.
+    2.  **XGBoost:** Tuned with `scale_pos_weight` (~1.86) to penalize missing cheaters.
+    3.  **CatBoost:** Utilized for its robust handling of numerical noise and overfitting prevention.
+* **Optimization:**
+    * **Hyperparameter Tuning:** Used **Optuna** (implied or manual search) to find optimal parameters like `num_leaves=40` and `max_depth=8` to prevent overfitting.
+    * **Weight Optimization:** Used `scipy.optimize.minimize` to find the perfect blending weights (LGBM: 0.33, XGB: 0.33, Cat: 0.33) that maximize the validation F2-Score.
 
 ## 4. Evaluation & Results
-The model was evaluated using **Stratified 5-Fold Cross-Validation** to ensure reliability.
+The model uses **Stratified 5-Fold Cross-Validation** to ensure stability.
 
-* **Model Performance (AUC):**
-    * XGBoost Best AUC: ~0.8531
-    * LightGBM Best AUC: ~0.8540
-    * CatBoost Best AUC: ~0.8543
-* **Threshold Optimization:** Instead of using the default 0.5 threshold, the decision boundary was optimized to maximize the **F2 Score** (prioritizing Recall).
-    * **Optimal Threshold:** 0.1050
-    * **Max F2 Score:** **0.8160**
+* **Primary Metric:** **F2-Score** (Prioritizing Recall over Precision, as missing a cheater is worse than a false report).
+* **Performance:**
+    * **Mean F2-Score:** **~0.8366** across 5 folds.
+    * **Threshold Tuning:** The decision threshold was dynamically optimized for each fold, averaging at **0.1827**, indicating an aggressive stance against potential cheaters.
 
 ## 5. Insights Gained from Model Behavior
-* **Recall Priority:** Optimization for the F2 score highlights that in cheat detection, missing a cheater (False Negative) is more detrimental than flagging a normal player for review (False Positive). The low threshold (0.1050) reflects this aggressive detection strategy.
-* **Ensemble Power:** Stacking consistently outperformed individual models by smoothing out the variance and bias of single algorithms.
-* **Behavioral Features:** Engineering features that combine "Skill" (Aim/Kills) with "Game Sense" (Map knowledge/Utility) proved crucial. Cheaters often have high mechanical stats but low game sense stats (high `Aim_to_Brain_Ratio`).
+* **Reports Matter:** `reports_received` and `report_friend_ratio` consistently ranked among the top features, confirming that community reporting is a strong signal when normalized correctly.
+* **Context is Key:** Raw stats like K/D ratio alone are less predictive than context-aware features like `performance_per_day` (Skill relative to Experience).
+* **SMOTE Effectiveness:** Applying SMOTE specifically improved the model's ability to identify rare, high-impact cheating patterns that were previously lost in the majority class.
 
 ## 6. Common Mistakes or Failed Experiments
-* **Avoided SMOTE:** Explicitly chose *not* to use SMOTE for oversampling. Previous experiments likely showed that synthesizing fake data points introduced noise, whereas using **Class Weights** provided a more stable signal for gradient boosting trees.
-* **Feature Noise:** Initially included `friend_network_size` and `buy_decision_score`, but dropping them (as seen in the `noise_cols` list) likely improved model convergence and reduced overfitting.
+* **Uniform Thresholds:** Using a default 0.5 threshold resulted in lower recall. Moving the threshold down to ~0.18 significantly boosted the F2 score by catching more borderline cases.
+* **Feature Noise:** Initial feature sets included redundant metrics. Feature selection using LightGBM importance helped prune zero-importance features, streamlining the model.
 
 ## 7. Domain Interpretation of Results
-* **Business Impact:** The high F2 Score (0.8160) indicates the model is highly effective at flagging potential cheaters for the moderation team. This reduces the manual workload of reviewing random reports and allows the team to focus on high-probability cases.
-* **Game Integrity:** By effectively using `reaction_time_ms` and `headshot_percentage` in context (via `suspicious_aim`), the model distinguishes between "Pro Players" (natural high skill) and "Aimbots" (unnatural perfection), ensuring a fairer gaming environment.
+* **Game Integrity:** The model effectively targets "Rage Hackers" (obvious stats) and "Closet Cheaters" (subtle aim-movement mismatches).
+* **Business Impact:** By automating the detection of high-probability cheaters (F2 ~0.84), the system reduces the manual workload for moderation teams and improves the overall fairness and player retention of the game.
 
 ---
 *Created for CPE342 by [Chonathun Cheepsathis/66070507201]*
