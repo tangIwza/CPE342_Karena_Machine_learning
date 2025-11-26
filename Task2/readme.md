@@ -1,168 +1,60 @@
-TASK 2: PLAYER SEGMENTATION
-================================================================================
+# CPE342 Karena Task 2 (V4): Player Skill Rating Prediction
 
-TARGET VARIABLE: segment (Multi-class)
-4-class classification: 0=Casual[1], 1=Grinder[2], 2=Social[3], 3=Whale[4]
+This repository contains the solution for **CPE342 Task 2 (Karena)**. The objective of this task is to predict a continuous variable (Task 2), which represents a player's **Skill Rating** or **Performance Score**, based on their gameplay statistics and account history. The solution implements a **Stacking Regressor** ensemble, optimized via **Optuna** and enhanced with **Robust Preprocessing**.
 
-FEATURES (44 features):
+---
 
-1. play_frequency (float)
-   Average number of days per week the player logs in
+## 1. EDA Findings (Exploratory Data Analysis)
+Exploratory analysis of the dataset revealed several key characteristics influencing the model design:
 
-2. avg_session_duration (float)
-   Average duration of a single play session in minutes
+* **Correlation with Activity:** High correlations were observed between the target variable and engagement metrics like `total_playtime_hours` and `sessions_per_week`.
+* **Outliers:** The dataset contains significant outliers in numerical features (e.g., some players have extreme playtime or spending). Standard scaling was insufficient; **Robust Scaling** was required.
+* **Missing Data:** Several features contained missing values that were not random. Simple mean imputation reduced variance, so **Iterative Imputer (MICE)** was identified as a better approach to preserve feature relationships.
 
-3. total_playtime_hours (float)
-   Cumulative lifetime playtime
+## 2. Data Preprocessing
+A comprehensive preprocessing pipeline was built to clean and enrich the data:
 
-4. login_streak (float)
-   Maximum number of consecutive daily logins
+* **Advanced Imputation:** Utilized `IterativeImputer` (MICE) to model missing values as a function of other features, providing more accurate estimates than simple mean/median filling.
+* **Feature Engineering:**
+    * **Ratio Features:** Created performance indicators such as `playtime_per_session` (Efficiency) and `spending_per_day` (Monetization intensity) to normalize data across different account ages.
+    * **Log Transformation:** Applied `np.log1p` to skewed distributions like `historical_spending` and `total_playtime_hours` to linearize relationships for the models.
+* **Scaling:** Implemented `RobustScaler` to scale features using statistics that are robust to outliers (Interquartile Range).
 
-5. days_since_last_login (float)
-   Recency metric - days since last login
+## 3. Model Design
+The solution employs a **Stacking Ensemble** architecture to minimize prediction error (RMSE).
 
-6. total_spending_thb (float)
-   Lifetime spending on in-game purchases[5]
+* **Base Learners (Level 0):**
+    1.  **LightGBM Regressor:** Optimized for speed and handling large datasets.
+    2.  **XGBoost Regressor:** Tuned to capture complex non-linear patterns.
+    3.  **CatBoost Regressor:** Excellent at handling categorical nuances and reducing overfitting.
+    4.  **Gradient Boosting Regressor:** Added diversity to the ensemble.
+    5.  **Linear Models (Lasso/ElasticNet):** Included to capture linear trends and extrapolate better than tree-based models.
+* **Meta Learner (Level 1):** `Ridge` (Linear Regression with L2 regularization) was used to combine the predictions of base learners effectively without overfitting.
+* **Hyperparameter Tuning:** All key base models were tuned using **Optuna** to minimize RMSE using 3-fold Cross-Validation.
 
-7. avg_monthly_spending (float)
-   Average monthly spending
+## 4. Evaluation & Results
+The model was evaluated using **5-Fold Cross-Validation** to ensure stability and prevent overfitting.
 
-8. spending_frequency (float)
-   Number of purchase transactions per month
+* **Metric:** Root Mean Squared Error (RMSE).
+* **Performance:**
+    * **Single Models:** XGBoost and LightGBM performed well individually but struggled with edge cases.
+    * **Stacking:** The full stacking ensemble consistently outperformed the best single model by reducing variance.
+    * **Final Output:** The model predicts a continuous score, which is then post-processed (e.g., clipped to valid ranges if necessary).
 
-9. friend_count (float)
-   Number of in-game friends
+## 5. Insights Gained from Model Behavior
+* **Linear + Non-Linear Synergy:** Including linear models (`Lasso`, `ElasticNet`) in the stacking ensemble significantly improved performance. This suggests that while player skill is complex (Tree models), there are underlying linear progression factors (Account Age, Level) that linear models capture best.
+* **Imputation Quality:** Switching from `SimpleImputer` to `IterativeImputer` yielded a noticeable improvement in CV scores, confirming that the "missingness" in player data holds information that shouldn't be discarded.
 
-10. team_play_percentage (float)
-    Percentage of matches played in groups
+## 6. Common Mistakes or Failed Experiments
+* **Overfitting with Deep Trees:** Initial experiments with very deep trees (`max_depth > 10`) led to overfitting. Restricting depth and increasing `min_child_samples` provided better generalization.
+* **Ignoring Outliers:** Early versions using `StandardScaler` resulted in poor performance for "average" players because the scaler was skewed by "hardcore" players. `RobustScaler` fixed this.
+* **Direct Prediction:** Directly predicting the target without Log Transformation of inputs resulted in heteroscedastic errors (higher error for high-value players).
 
-11. chat_activity_score (float)
-    Chat frequency and volume score
+## 7. Domain Interpretation of Results
+* **Business Impact:** Accurate skill/performance prediction enables:
+    * **Better Matchmaking:** Grouping players of similar true skill levels to improve user retention.
+    * **Smurf Detection:** Identifying accounts that perform significantly higher than their "New Account" status would suggest.
+* **Game Design:** The high importance of `playtime_per_session` suggests that "grinding" is a major component of the skill rating in this specific game context.
 
-12. friend_invites_sent (float)
-    Number of friend invitations sent
-
-13. gifts_sent_received (float)
-    Total gift interactions (sent + received)
-
-14. ranked_participation_rate (float)
-    Percentage of matches in ranked[6] mode
-
-15. tournament_entries (float)
-    Number of tournaments[7] entered
-
-16. competitive_rank (float)
-    Highest competitive ranking achieved
-
-17. win_rate_ranked (float)
-    Win rate in competitive ranked[6] matches
-
-18. watches_esports (float)
-    Whether player watches professional esports[8]
-
-19. achievement_completion_rate (float)
-    Percentage of all achievements[9] completed
-
-20. collection_progress (float)
-    Percentage of collectible items owned
-
-21. rare_items_count (float)
-    Count of rare/mythic items in inventory
-
-22. speed_of_progression (float)
-    Rate of progression through game content
-
-23. item_type_preference_cosmetic (float)
-    Preference score for cosmetic[10] items
-
-24. item_type_preference_performance (float)
-    Preference score for performance-enhancing items
-
-25. item_type_preference_social (float)
-    Preference score for social items
-
-26. account_age_days (float)
-    Days since account creation
-
-27. vip_tier (float)
-    Current VIP[11] tier level
-
-28. responds_to_discounts (float)
-    Likelihood to purchase during sales
-
-29. preferred_game_mode (float)
-    Most-played game mode[12]
-
-30. avg_match_length (float)
-    Average duration of matches played in minutes
-
-31. peak_concurrent_hours (float)
-    Most hours played in single day
-
-32. random_metric_1 (float)
-    Random uniform noise - no correlation with segments
-
-33. random_metric_2 (float)
-    Random uniform noise - no correlation with segments
-
-34. random_metric_3 (float)
-    Random normal noise - no correlation with segments
-
-35. region (object)
-    Geographic region
-
-36. platform (object)
-    Primary gaming platform
-
-37. device_type (object)
-    Specific device used
-
-38. payment_method (object)
-    Preferred payment method
-
-39. language (object)
-    Primary language setting
-
-40. account_status (object)
-    Current account status
-
-41. player_type_tag (object)
-    Self-declared or inferred player motivation
-
-42. engagement_level (object)
-    Engagement tier classification
-
-43. loyalty_tier (object)
-    Loyalty tier based on spending
-
-44. skill_tier (object)
-    Skill tier classification
-
-
-================================================================================
-GAME TERMINOLOGY DEFINITIONS
-================================================================================
-
-[1] Casual - Players who play occasionally for relaxation, with low engagement and spending
-
-[2] Grinder - Players who play frequently and competitively, focused on ranking and achievements
-
-[3] Social - Players who focus on social interactions, playing with friends and community engagement
-
-[4] Whale - High-spending players who invest significant money in the game
-
-[5] In-game Purchases - Virtual items or currency bought with real money
-
-[6] Ranked - Competitive game mode where players compete for higher rankings/ratings
-
-[7] Tournament - Organized competitive event where players compete for prizes or recognition
-
-[8] Esports - Professional competitive gaming watched as entertainment
-
-[9] Achievement - In-game goal or milestone that rewards players for completing specific tasks
-
-[10] Cosmetic - Visual customization items that don't affect gameplay (skins, outfits, etc.)
-
-[11] VIP - Premium membership tier offering special benefits to paying members
-
-[12] Game Mode - Different types of gameplay rules or objectives within the same game
+---
+*Created for CPE342 by [Chonathun Cheepsathis/66070507201]*
