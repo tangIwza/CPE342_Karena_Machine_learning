@@ -1,69 +1,65 @@
-# CPE342 Karena Task 3 (V6): Future Spending Prediction
+# CPE342 Karena Task 3 (V8): Hybrid Two-Stage Spending Prediction
 
-This repository contains the solution for **CPE342 Task 3 (Karena)**, aimed at predicting the 30-day future spending of players (`spending_30d`). The solution implements a sophisticated **Two-Stage Full Stacking Ensemble** approach, optimized with **Optuna** and enhanced by **MICE Imputation**.
+This repository contains the solution for **CPE342 Task 3 (Karena)**, aimed at predicting the 30-day future spending of players. This version (V8) implements a **Hybrid Two-Stage Architecture** combining a **Voting Classifier** (for purchase probability) and a **Stacked Regressor** (for amount estimation), enhanced with Unsupervised Clustering features.
 
 ---
 
-## 1. EDA Findings (Exploratory Data Analysis)
-Analysis of the game data revealed distinct patterns necessitating a specific modeling approach:
+## 📊 1. EDA Findings (Exploratory Data Analysis)
+Exploration of the dataset highlighted specific challenges regarding player spending behavior:
 
-* **Zero-Inflated Data:** A vast majority of players do not spend money ($0 value), while a small segment ("Whales") spends significantly. This implies a single regression model would struggle.
-    * *Solution:* Split the problem into **Classification** (Will spend?) and **Regression** (How much?).
-* **Skewed Distributions:** Key features like `historical_spending` and `total_playtime_hours` are heavily right-skewed.
-* **Correlated Behaviors:** High spenders often have distinct behavioral markers, such as high `purchases_on_discount` ratios and specific `platform` preferences.
+* **Zero-Inflation:** A vast majority of players have `spending_30d = 0`. A direct regression model often fails to capture this, predicting small non-zero values for everyone.
+* **Behavioral Clusters:** Players don't behave uniformly. There are distinct groups (e.g., high-time/low-spend, low-time/high-spend). This led to the introduction of **K-Means Clustering** to create a `cluster_group` feature.
+* **Skewness:** Features like `historical_spending` and `total_transactions` span multiple orders of magnitude, requiring Log Transformation to stabilize model training.
 
 ## ⚙️ 2. Data Preprocessing
-A robust pipeline was built to handle missing values and outliers effectively:
+The preprocessing pipeline was upgraded to include both supervised and unsupervised techniques:
 
-* **Advanced Imputation (MICE):** Switched from simple mean/median filling to **IterativeImputer (MICE)**. This models each feature as a function of others, providing much more accurate estimates for missing player stats.
-* **Feature Engineering:**
-    * **Behavioral Ratios:** Created `spending_per_day`, `playtime_per_session`, and `interaction_per_friend` to normalize data across account ages.
-    * **Whale Flags:** Added `is_whale` (Top 5% spenders) and `high_activity` (Top 10% playtime) to help the model identify VIPs explicitly.
-* **Transformations:**
-    * **Log Transformation:** Applied `np.log1p` to skewed columns to normalize distributions for linear models.
-    * **Robust Scaling:** Used `RobustScaler` instead of StandardScaler to minimize the impact of extreme outliers (Whales).
+* **Unsupervised Feature Engineering (Clustering):** Applied **K-Means (k=7)** on log-transformed spending and playtime data to categorize players into distinct behavioral profiles (`cluster_group`).
+* **Interaction Features:** Created `engagement_score` (Playtime × Friend Count) to capture the synergy between social activity and game engagement.
+* **Encoding:** Switched to **TargetEncoder** for categorical variables (like `primary_game`, `cluster_group`), which is more effective for high-cardinality features in regression tasks than One-Hot Encoding.
+* **Scaling:** Continued using `RobustScaler` to handle the extreme outliers typical of "Whale" players.
 
-## 3. Model Design
-The core architecture is a **Hurdle Model (Two-Stage Prediction)** implemented via Stacking:
+## 🧠 3. Model Design
+The solution uses a **Hurdle Model** architecture to separate the "Decision to Buy" from the "Amount Spent":
 
-### Stage 1: Classification (Will the player spend?)
-* **Objective:** Predict probability of `spending_30d > 0`.
-* **Stacking Ensemble:**
-    * **Base Learners:** `LGBMClassifier` (Tuned), `XGBClassifier` (Tuned), `LogisticRegression`.
-    * **Meta Learner:** `LogisticRegression`.
-    * **Optimization:** Hyperparameters tuned via **Optuna** to maximize ROC-AUC.
+### Stage 1: Probability (Will they spend?)
+* **Objective:** Binary Classification (`spending_30d > 0`).
+* **Model:** **VotingClassifier (Soft Voting)** combining:
+    * **LGBMClassifier:** Tuned with `class_weight='balanced'`.
+    * **XGBClassifier:** Tuned with `scale_pos_weight`.
+* **Why:** Voting smoothens the decision boundary and reduces false negatives.
 
-### Stage 2: Regression (If they spend, how much?)
-* **Objective:** Predict `log1p(spending_30d)` for positive cases.
-* **Stacking Ensemble:**
-    * **Base Learners:** `LGBMRegressor`, `XGBRegressor`, `GradientBoostingRegressor`, `LassoCV`, `ElasticNetCV`.
-    * **Meta Learner:** `Lasso` (L1 Regularization) to robustly blend predictions.
-    * **Optimization:** Hyperparameters tuned via **Optuna** to minimize RMSE.
+### Stage 2: Amount (If spending, how much?)
+* **Objective:** Regression on `log1p(spending_30d)`.
+* **Model:** **StackingRegressor** with a diverse set of learners:
+    * **Base Layers:** `LGBMRegressor`, `XGBRegressor`, `CatBoostRegressor`, `GradientBoostingRegressor`, plus Linear Models (`LassoCV`, `ElasticNetCV`) to prevent overfitting.
+    * **Meta Learner:** `KernelRidge` (Non-linear combination).
+* **Why:** Stacking combines the pattern recognition of Trees with the extrapolation capabilities of Linear/Kernel models.
 
-## 4. Evaluation & Results
-The model uses **5-Fold Cross-Validation** to ensure generalization.
+## 📈 4. Evaluation & Results
+Models were optimized using **Optuna** with Stratified K-Fold Cross-Validation.
 
-* **Metric:** The final output combines the Probability from Stage 1 and the Amount from Stage 2.
-    * *Equation:* `Final_Prediction = Probability_Spend * Predicted_Amount`
-* **Performance:**
-    * **Classification:** High AUC scores indicated the model effectively separates F2P players from payers.
-    * **Regression:** The stacking approach with Lasso meta-learner significantly reduced error variance compared to single models.
+* **Classification Performance:** The Voting Classifier achieved ~0.78 AUC, effectively filtering out non-spenders.
+* **Regression Performance:** The Stacking Regressor achieved an RMSE of ~0.2221 (Log scale) on the spender subset.
+* **Final Prediction Logic:**
+    $$\text{Final Prediction} = P(\text{Buy}) \times \text{Expm1}(\text{Predicted Log Amount})$$
+    This effectively dampens the predicted amount for users with low purchase probability.
 
-## 5. Insights Gained from Model Behavior
-* **The Power of Two Stages:** Trying to predict spending directly with a single regressor often yields poor results because the model learns to predict near-zero values for everyone. Separating the "Zero" vs "Non-Zero" decision drastically improved accuracy.
-* **Linear Models in Stacking:** While Tree-based models (XGB/LGBM) are excellent feature extractors, including linear models (`Lasso`, `ElasticNet`) in the stacking layer helped the model extrapolate better for high-spending "Whale" values.
-* **Imputation Matters:** Using MICE (`IterativeImputer`) preserved the correlation structure between `friend_count` and `social_interactions`, which simple imputation destroys.
+## 💡 5. Insights Gained from Model Behavior
+* **The "Hybrid" Effect:** Multiplying the regression output by the classification probability acts as a gate. It pushes the prediction for unlikely spenders towards true zero, drastically reducing the error compared to using regression alone.
+* **Cluster Importance:** The `cluster_group` feature became a strong predictor, as it effectively encoded the "player persona" (e.g., F2P Grinder vs. P2W Whale) into a single categorical variable.
+* **Diversity in Stacking:** Adding `Lasso` and `ElasticNet` to the stack stabilized predictions for extreme values where Tree-based models often plateau.
 
-## 6. Common Mistakes or Failed Experiments
-* **Global Imputation:** In earlier versions, imputing data before splitting caused data leakage. V6 fixes this by using `Pipeline` to impute within cross-validation folds.
-* **Ignoring Outliers:** Standard scaling failed because "Whales" skewed the mean. Switching to `RobustScaler` (based on quartiles) stabilized the linear models in the stack.
-* **Single Stage Regression:** Initial attempts to use just XGBoost Regressor resulted in many negative predictions or under-prediction of high spenders.
+## ❌ 6. Common Mistakes or Failed Experiments
+* **Single Stage Regression:** Trying to predict `spending_30d` directly with one model resulted in poor performance due to the imbalance of zeros.
+* **Over-reliance on Trees:** In previous versions, using only boosting trees (XGB/LGBM) caused overfitting. Adding linear models and `KernelRidge` in the stacking layer improved generalization on the test set.
+* **Leakage in Encoding:** Target Encoding can cause leakage if not handled correctly. We mitigated this by using `Pipeline` to fit the encoder only within the cross-validation folds.
 
-## 7. Domain Interpretation of Results
-* **Business Impact:** Accurately predicting LTV (Lifetime Value) allow game developers to:
-    1.  **Target Whales:** Offer exclusive VIP packages to high-predicted spenders.
-    2.  **Convert F2P:** Identify players with high conversion probability (Stage 1) but low predicted spending (Stage 2) and target them with "Starter Pack" discounts.
-* **Segmentation:** The `segment` and `is_premium_member` features were critical, suggesting that monetization strategies should be tailored to specific player tiers rather than a one-size-fits-all approach.
+## 🌍 7. Domain Interpretation of Results
+* **Monetization Strategy:** The model effectively identifies "Potential Spenders" (High Prob, Low Amount) vs "Whales" (High Prob, High Amount).
+    * *Action:* Send "Starter Pack" offers to Potential Spenders.
+    * *Action:* Send "VIP Exclusive" offers to Whales.
+* **Social Influence:** The `engagement_score` (derived from friends and playtime) confirms that socially active players are monetarily valuable, suggesting that social features (guilds, chats) drive revenue.
 
 ---
 *Created for CPE342 by [Chonathun Cheepsathis/66070507201]*
